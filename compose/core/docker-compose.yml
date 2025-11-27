@@ -1,0 +1,93 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    env_file: ../../env/.env.core
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: always
+    networks: [app]
+
+  redis:
+    image: redis:7
+    restart: always
+    networks: [app]
+
+  worker:
+    image: ${WEB_IMAGE}
+    command: celery -A app worker -l INFO --concurrency=4
+    env_file: ../../env/.env.core
+    restart: always
+    networks: [app]
+
+  beat:
+    image: ${WEB_IMAGE}
+    command: celery -A app beat -l INFO
+    env_file: ../../env/.env.core
+    restart: always
+    networks: [app]
+
+  executor:
+    image: ${EXECUTOR_IMAGE}
+    env_file: ../../env/.env.core
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]  # runner 생성 제어
+    restart: always
+    networks: [app]
+
+  minio:   # (개발용) 운영은 S3 권장
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes: ["miniodata:/data"]
+    restart: always
+    networks: [app]
+
+  # ===== Observability (Core에 수집 통합) =====
+  otel:
+    image: otel/opentelemetry-collector:latest
+    volumes:
+      - ../ops/otel/otel.yaml:/etc/otelcol/config.yaml:ro
+    ports: ["4317:4317"]     # Edge에서 Core OTel로 보낼 때 필요(사설망에서만 허용)
+    restart: always
+    networks: [app]
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ../ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports: ["9090:9090"]     # 내부 관리용(보안그룹/방화벽으로 제한)
+    restart: always
+    networks: [app]
+
+  grafana:
+    image: grafana/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes: ["grafdata:/var/lib/grafana"]
+    ports: ["3000:3000"]     # 내부 관리용(보안그룹/방화벽으로 제한)
+    restart: always
+    networks: [app]
+
+  loki:
+    image: grafana/loki
+    volumes:
+      - ../ops/loki/loki-local-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports: ["3100:3100"]     # 내부 관리용
+    restart: always
+    networks: [app]
+
+volumes:
+  pgdata: {}
+  miniodata: {}
+  promdata: {}
+  grafdata: {}
+  lokidata: {}
+
+networks:
+  app: { driver: bridge }

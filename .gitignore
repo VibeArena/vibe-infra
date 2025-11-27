@@ -1,0 +1,7 @@
+# secret overrides
+.env
+*/.env
+env/.env.core
+env/.env.edge
+compose/core/.env
+compose/edge/.env
